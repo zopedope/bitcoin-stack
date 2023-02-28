@@ -32,7 +32,7 @@ L1:            |     BITCOIN      |╟-----------┴---╢|     ELEMENTS     |
                └------------------┘                 └------------------┘
 ```
 
-This `docker-compose` template launches `bitcoin`, two `lnd` containers named `alice` & `bob`, with a `clightning` container as `carol`, and an `eclair` container as `frank`.
+This `docker compose` template launches `bitcoin`, two `lnd` containers named `alice` & `bob`, with a `clightning` container as `carol`, and an `eclair` container as `frank`.
 
 Additionally it can launch an `elements` sidechain (aka Liquid), with `clightning` implementation containers as `dave` & `emma` servicing the LBTC asset.
 
@@ -45,19 +45,21 @@ Everything is configured to run in **regtest** mode but can be adjusted as requi
 ## See the [changelog](CHANGELOG.md) before upgrading.
 
 ### Notes & prerequisites
- - `docker` and `docker-compose` installation is required (https://docs.docker.com/install/).
+ - `docker` with `compose` installation is required (https://docs.docker.com/install/).
  - `jq` tool is used in examples for parsing json responses.
  - All nodes will sync to chain after the first Bitcoin & Elements regtest blocks are generated.
  - Precompiled images are provided on Docker Hub but it is not recommended to use them in production environments.
- - Ports and other daemon configuration can be changed in the `.env` and `docker-compose.yml` files.
+ - Ports and other daemon configuration can be changed in the `.env` and `docker-compose` files.
 
 ### To Do
  - Orchestration
  - Clightning REST/RPC example
  - Add Clightning & Eclair configs to RTL
- - RGB protocol
+ - Lightning Terminal
+ - Taro/RGB protocols
  - Libbitcoin reference
  - Elements token creation and transaction scripts
+ - Elements pegout example
  - Token swaps within Elements
  - Lightning swaps across Bitcoin and Elements
  - Trampoline routing example
@@ -67,24 +69,27 @@ Everything is configured to run in **regtest** mode but can be adjusted as requi
 Precompiled images will be downloaded from Docker Hub (see below for manual build instructions). From your terminal in this folder:
 
 ```
-$ docker-compose up -d bitcoin electrs
+$ bin/stack up -d bitcoin electrs
 # setup default wallet with predictable addresses
-$ bin/stack bitcoin createwallet "default"
+$ bin/stack bitcoin -named createwallet wallet_name=default descriptors=false
 $ bin/stack bitcoin sethdseed true cSXteaZPxiDNEjtsgMhDKik5CL6YUc2hrEdkm51DrL85873UUFiQ
 $ bin/stack bitcoin generate 101
-$ docker-compose up -d alice bob frank
+$ bin/stack up -d alice bob frank
 
 # Elements can be started optionally
-$ docker-compose up -d elements
+$ bin/stack up -d elements
+# setup default wallet with predictable addresses
+$ bin/stack elements -named createwallet wallet_name=default descriptors=false
+$ bin/stack elements sethdseed true cU3PLoGpKkZ3M72w5jLB7Yub5WSLvep28GQQbFYQSi8JZcppAFVD
 $ bin/stack elements generate 101
 
 # Clightning can also be started on Bitcoin & Elements
-$ docker-compose up -d carol dave emma
+$ bin/stack up -d carol dave emma
 ```
 
 Check containers are up and running with:
 ```
-$ docker-compose ps
+$ docker ps -a
 ```
 
 Use the provided CLI tool to execute commands in the containers:
@@ -101,15 +106,15 @@ $ bin/stack frank getinfo
 
 Generate some bitcoin tx spam to enable smart fee estimation.
 ```
-$ docker-compose up -d demo
-$ docker-compose exec demo sh -c "node bitcoin-spam.js"
+$ bin/stack up -d demo
+$ docker compose exec demo sh -c "node bitcoin-spam.js"
 $ bin/stack bitcoin estimatesmartfee 24 ECONOMICAL
 ```
 
 ### Notification listener demo
 Start following the demo subscriber node in a separate terminal window to see invoice messages as they come through.
 ```
-$ docker-compose logs -f demo
+$ bin/stack logs -f demo
 $ bin/stack alice addinvoice 1000
 ```
 
@@ -126,12 +131,12 @@ $ bin/stack alice listchannels
 $ bin/stack bob listchannels
 ```
 
-### LND AMP keysend to LND
-The `bob` container is also configured to accept `keysend` transactions using `amp` so multi-part payments can be made without requiring an invoice.
+### LND keysend to LND
+The `bob` container is also configured to accept `keysend` transactions so payments can be made without requiring an invoice.
 ```
 # assuming channel is opened as above
 $ BOB_NODE=$(bin/stack bob getinfo | jq -r '.identity_pubkey')
-$ bin/stack alice sendpayment --amp $BOB_NODE 10000
+$ bin/stack alice sendpayment --keysend --dest $BOB_NODE --amt 10000
 ```
 
 ### LND invoice payment to Clightning
@@ -151,7 +156,7 @@ You can also receive `keysend` payments to `clightning`:
 ```
 # assuming channel is opened as above (might take a minute to sync & activate)
 $ CAROL_NODE=$(bin/stack carol getinfo | jq -r '.id')
-$ bin/stack bob sendpayment --keysend $CAROL_NODE 10000
+$ bin/stack bob sendpayment --keysend --dest $CAROL_NODE --amt 10000
 ```
 
 ### LND PSBT based channel creation
@@ -159,14 +164,14 @@ For this process we will use two terminal windows one for LND and one for Bitcoi
 ```
 # LND terminal
 $ BOB_NODE=$(bin/stack bob getinfo | jq -r '.identity_pubkey')
-$ bin/stack alice openchannel $BOB_NODE 750000 --psbt
+$ bin/stack alice openchannel --node_key $BOB_NODE --local_amt 750000 --psbt
 # Bitcoin terminal
 $ bin/stack bitcoin walletcreatefundedpsbt '[]' '[{"<address chosen by lnd>":0.00750000}]' | jq -r '.psbt' > funded.psbt
-$ docker cp funded.psbt "$(docker-compose ps -q alice)":/funded.psbt
+$ docker cp funded.psbt "$(docker compose ps -q alice)":/funded.psbt
 # LND terminal enter `/funded.psbt` as file path
 # Bitcoin terminal signing round
 $ bin/stack bitcoin walletprocesspsbt $(cat funded.psbt) | jq -r '.psbt' > signed.psbt
-# docker cp signed.psbt "$(docker-compose ps -q alice)":/signed.psbt
+# docker cp signed.psbt "$(docker compose ps -q alice)":/signed.psbt
 # > LND terminal enter `/signed.psbt` as file path
 $ bin/stack bitcoin generate 3
 $ bin/stack alice listchannels
@@ -193,7 +198,7 @@ A `clightning` plugin example is included for more advanced feature development.
 $ bin/stack carol hello yourname
 ```
 
-### Eclair invoice payment to Clightning
+### Eclair invoice payment through LND to Clightning
 Similar commands will connect `frank` to `bob` from the `eclair` implementation of LN on Bitcoin.
 ```
 $ bin/stack frank channelto bob 10000000
@@ -227,47 +232,53 @@ $ bin/stack emma listinvoices
 ### REST/RPC examples
 REST/RPC queries can be executed directly from your application to each daemon. Use standard RPC adapters to connect to these and have full control over money flow; hook into message queues for notifications B).
 ```
-#bitcoin
-$ curl --data-binary '{"jsonrpc":"1.0","id":"curltext","method":"getwalletinfo","params":[]}' -H 'content-type:text/plain;' http://bitcoin:bitcoin@127.0.0.1:18889/
+# bitcoin
+$ curl --data-binary '{"jsonrpc":"1.0","id":"curltext","method":"getwalletinfo","params":[]}' -H 'content-type:text/plain;' http://bitcoin:bitcoin@127.0.0.1:18889
 
-#elements
-$ curl --data-binary '{"jsonrpc":"1.0","id":"curltext","method":"getwalletinfo","params":[]}' -H 'content-type:text/plain;' http://elements:elements@127.0.0.1:18886/
+# elements
+$ curl --data-binary '{"jsonrpc":"1.0","id":"curltext","method":"getwalletinfo","params":[]}' -H 'content-type:text/plain;' http://elements:elements@127.0.0.1:18886
 
-#lnd
-$ ALICE_MACAROON_HEADER="Grpc-Metadata-macaroon: `docker-compose exec -T alice cat /home/lnd/.lnd/data/chain/bitcoin/regtest/admin.macaroon | xxd -ps -u -c 1000`"
-$ echo "$(docker-compose exec -T alice cat /home/lnd/.lnd/tls.cert)" > ./alice-tls.cert
+# lnd
+$ ALICE_MACAROON_HEADER="Grpc-Metadata-macaroon: `docker compose exec -T alice cat /home/lnd/.lnd/data/chain/bitcoin/regtest/admin.macaroon | xxd -ps -u -c 1000`"
+$ echo "$(docker compose exec -T alice cat /home/lnd/.lnd/tls.cert)" > ./alice-tls.cert
 $ curl -XGET --cacert ./alice-tls.cert --header "$ALICE_MACAROON_HEADER" https://127.0.0.1:8090/v1/balance/channels
 
-#eclair
+# eclair
 $ curl -XPOST -u :password http://127.0.0.1:8110/getinfo
 
-#clightning
+# clightning
 Clightning exposes a JSON-RPC interface via a socket... example to follow..
 
-#electrs
+# electrs
 $ echo '{"jsonrpc":"2.0","method":"blockchain.block.header","id":"curltext","params":[0]}' | nc 127.0.0.1 50001
 ```
 
 ## RTL Admin
 A [Ride-The-Lightning](https://github.com/Ride-The-Lightning/RTL) admin UI container is available. The interface is configured to monitor `alice` and `bob` by default and is available at `http://localhost:3000` with login password `rtl`.
 ```
-$ docker-compose up -d rtl
+$ bin/stack up -d rtl
 ```
 
 ## Other information
 View daemon logs as follows:
 ```
-$ docker-compose logs -f
+$ bin/stack logs -f
 ```
 
 When you are done you can destroy all running containers and volumes with:
 ```
-$ docker-compose down -v
+$ bin/stack down -v
 ```
 
-Images can be built locally using the following pattern:
+Single architecture images can be built locally as follows:
 ```
-$ docker build --build-arg BITCOIN_VERSION=21.1 -t bitcoinstack/bitcoin:21.1 ./bitcoin
+$ docker build --build-arg BITCOIN_VERSION=23.0 -t bitcoinstack/bitcoin:23.0-alpine ./bitcoin
+```
+
+Multi-architecture images can be built locally using the following commands:
+```
+$ docker buildx create --name bitcoinstack --platform linux/amd64,linux/arm64
+$ docker buildx build --builder bitcoinstack --platform linux/amd64,linux/arm64 --build-arg BITCOIN_VERSION=22.0 -t bitcoinstack/bitcoin:22.0-alpine ./bitcoin
 ```
 
 ---

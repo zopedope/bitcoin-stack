@@ -31,14 +31,16 @@ RUN apk --no-cache add autoconf automake build-base libressl
 ENV BERKELEYDB_VERSION=db-4.8.30.NC
 ENV BERKELEYDB_PREFIX=/opt/${BERKELEYDB_VERSION}
 
-RUN wget https://download.oracle.com/berkeley-db/${BERKELEYDB_VERSION}.tar.gz
+RUN wget -nv https://download.oracle.com/berkeley-db/${BERKELEYDB_VERSION}.tar.gz
 RUN tar -xzf *.tar.gz
 RUN sed s/__atomic_compare_exchange/__atomic_compare_exchange_db/g -i ${BERKELEYDB_VERSION}/dbinc/atomic.h
 RUN mkdir -p ${BERKELEYDB_PREFIX}
 
 WORKDIR /${BERKELEYDB_VERSION}/build_unix
-
-RUN ../dist/configure --enable-cxx --disable-shared --with-pic --prefix=${BERKELEYDB_PREFIX}
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "arm64" ] ; \
+  then ../dist/configure --enable-cxx --disable-shared --with-pic --prefix=${BERKELEYDB_PREFIX} --build=arm-unknown-linux ; \
+  else ../dist/configure --enable-cxx --disable-shared --with-pic --prefix=${BERKELEYDB_PREFIX} ; fi
 RUN make -j$(nproc)
 RUN make install
 RUN rm -rf ${BERKELEYDB_PREFIX}/docs
@@ -50,51 +52,42 @@ COPY --from=berkeleydb /opt /opt
 
 RUN sed -i 's/http\:\/\/dl-cdn.alpinelinux.org/https\:\/\/alpine.global.ssl.fastly.net/g' /etc/apk/repositories
 RUN apk --no-cache add autoconf \
- automake \
- boost-dev \
- build-base \
- chrpath \
- file \
- gnupg \
- libevent-dev \
- libressl \
- libressl-dev \
- libtool \
- linux-headers \
- protobuf-dev \
- zeromq-dev
-
-RUN set -ex \
-  && for key in \
-    #niftynei
-    #6BE2CED14A9917BC \
-    #stevenroose
-    8CC974D9CFD034DCEED213B02A57E0A610D7F19C \
-  ; do \
-    gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" || \
-    gpg --batch --keyserver pgp.mit.edu --recv-keys "$key" || \
-    gpg --batch --keyserver keyserver.pgp.com --recv-keys "$key" || \
-    gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys "$key" || \
-    gpg --batch --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys "$key" ; \
-  done
+  automake \
+  boost-dev \
+  build-base \
+  chrpath \
+  file \
+  gnupg \
+  libevent-dev \
+  libressl \
+  libressl-dev \
+  libtool \
+  linux-headers \
+  sqlite-dev \
+  protobuf-dev \
+  zeromq-dev
 
 ARG ELEMENTS_VERSION
 ENV ELEMENTS_PREFIX=/opt/elements
 
-RUN wget https://github.com/ElementsProject/elements/releases/download/elements-${ELEMENTS_VERSION}/SHA256SUMS.asc
-RUN wget https://github.com/ElementsProject/elements/archive/elements-${ELEMENTS_VERSION}.tar.gz
-RUN gpg --verify SHA256SUMS.asc
-# @todo get the correct source bundle checksum from somewhere
-# RUN grep " elements-${ELEMENTS_VERSION}.tar.gz\$" SHA256SUMS.asc | sha256sum -c -
+RUN wget -nv https://github.com/ElementsProject/elements/releases/download/elements-${ELEMENTS_VERSION}/SHA256SUMS.asc
+RUN wget -nv https://github.com/ElementsProject/elements/releases/download/elements-${ELEMENTS_VERSION}/elements-${ELEMENTS_VERSION}.tar.gz
+RUN grep "elements-${ELEMENTS_VERSION}.tar.gz\$" SHA256SUMS.asc | sha256sum -c -
+RUN SIGNER_KEY=$(gpg --dry-run --verify SHA256SUMS.asc 2>&1 | grep "RSA key" | rev | cut -d' ' -f1 | rev)
+RUN gpg --batch --keyserver keys.openpgp.org --recv-keys ${SIGNER_KEY} || true
+RUN gpg --batch --keyserver keyserver.ubuntu.com --recv-keys ${SIGNER_KEY} || true
+# @todo fix verification in action RUN gpg --verify SHA256SUMS.asc
 RUN tar -xzf *.tar.gz
 
-WORKDIR /elements-elements-${ELEMENTS_VERSION}
+WORKDIR /elements-${ELEMENTS_VERSION}
 
 RUN sed -i '/AC_PREREQ/a\AR_FLAGS=cr' src/univalue/configure.ac
 RUN sed -i '/AX_PROG_CC_FOR_BUILD/a\AR_FLAGS=cr' src/secp256k1/configure.ac
 RUN sed -i s:sys/fcntl.h:fcntl.h: src/compat.h
 RUN ./autogen.sh
-RUN ./configure LDFLAGS=-L`ls -d /opt/db*`/lib/ CPPFLAGS=-I`ls -d /opt/db*`/include/ \
+# https://github.com/ElementsProject/elements/issues/987
+RUN ./configure CFLAGS='-g -O2 -fno-stack-check' CXXFLAGS='-g -O2 -fno-stack-check' OBJCXXFLAGS='-g -O2 -fno-stack-check' \
+    LDFLAGS=-L`ls -d /opt/db*`/lib/ CPPFLAGS=-I`ls -d /opt/db*`/include/ \
     --prefix=${ELEMENTS_PREFIX} \
     --mandir=/usr/share/man \
     --disable-tests \

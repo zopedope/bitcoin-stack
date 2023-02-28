@@ -1,5 +1,21 @@
 # Changelog
 
+## 2022-12-09
+ - Update `clightning` to v22.11.1
+
+## 2022-12-02
+ - Update `eclair` to v0.8.0
+ - Update `lnd` to v0.15.5-beta
+
+## 2022-11-29
+ - Update `bitcoin` to v23.0 (switching to new numbering convention)
+ - Update `elements` to v22.0.2
+ - Update `clightning` to v0.12.1
+ - Update `eclair` to v0.7.0-patch-disconnect
+ - Update `electrs` to v0.9.10
+ - Update `lnd` to v0.15.4-beta
+ - Update `rtl` to v0.13.2
+
 ## 2021-11-13
  - Update `eclair` to v0.6.2
  - Update `electrs` to v0.9.2
